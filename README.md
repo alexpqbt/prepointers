@@ -1,4 +1,4 @@
-# Chat Application
+# Prepointers
 
 A simple client-server chat application built with Java 25, Maven, and Swing.
 
