@@ -169,8 +169,6 @@ server.port=5000
    - **Login** with an existing account.
 3. After authentication the chat screen opens automatically.
 4. Type a message and press **Enter** or click **Send**.
-5. If the connection drops, an **Offline** indicator appears with a
-   **Reconnect** button.
 
 ---
 
@@ -183,7 +181,6 @@ server.port=5000
 | Allowed characters | Letters, digits, `_`, `-` |
 | Consecutive symbols | Not allowed (`john__doe`, `john-_doe`) |
 | Password minimum | 4 characters |
-| Storage | Plain-text CSV (`users.csv` next to the JAR / EXE) |
 | Duplicate login | Rejected with a specific error message |
 
 ---
