@@ -1,247 +1,308 @@
 package com.chatapp.client;
 
 import javax.swing.*;
-import javax.swing.text.*;
+import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.*;
-import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
+import java.io.IOException;
 
-public class ClientGui extends JFrame {
+/**
+ * ClientGUI — single-window Swing UI for the chat client.
+ *
+ * The window has two "cards" managed by a CardLayout:
+ *   1. AUTH_CARD  — login / register form
+ *   2. CHAT_CARD  — public chat display + input field
+ *
+ * All network callbacks arrive on background threads and are safely
+ * dispatched to the Event Dispatch Thread via SwingUtilities.invokeLater().
+ */
+public class ClientGUI extends JFrame implements ChatClient.ServerListener {
 
-    private final Config config = new Config();
-    private ServerConnection connection;
-    private String username;
+    // ── Card names ────────────────────────────────────────────────────────────
 
-    // Auth panel
-    private final JPanel authPanel = new JPanel(new GridBagLayout());
-    private final JTextField userField = new JTextField(18);
-    private final JPasswordField passField = new JPasswordField(18);
-    private final JButton loginBtn = new JButton("Login");
-    private final JButton registerBtn = new JButton("Register");
-    private final JLabel authStatus = new JLabel(" ");
+    private static final String AUTH_CARD = "AUTH";
+    private static final String CHAT_CARD = "CHAT";
 
-    // Chat panel
-    private final JPanel chatPanel = new JPanel(new BorderLayout(5, 5));
-    private final JTextPane chatPane = new JTextPane();
-    private final JTextField inputField = new JTextField();
-    private final JButton sendBtn = new JButton("Send");
-    private final JLabel statusLabel = new JLabel("● Offline");
-    private final JButton reconnectBtn = new JButton("Reconnect");
+    // ── Dependencies ──────────────────────────────────────────────────────────
 
-    private final CardLayout cards = new CardLayout();
-    private final JPanel root = new JPanel(cards);
+    private final ChatClient client;
 
-    private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm");
-    private static final SimpleAttributeSet STYLE_DEFAULT = new SimpleAttributeSet();
-    private static final SimpleAttributeSet STYLE_SYSTEM_JOIN = new SimpleAttributeSet();
-    private static final SimpleAttributeSet STYLE_SYSTEM_LEAVE = new SimpleAttributeSet();
-    private static final SimpleAttributeSet STYLE_ERROR = new SimpleAttributeSet();
+    // ── Shared widgets ────────────────────────────────────────────────────────
 
-    static {
-        StyleConstants.setForeground(STYLE_DEFAULT, Color.BLACK);
-        StyleConstants.setForeground(STYLE_SYSTEM_JOIN, new Color(0, 140, 0));
-        StyleConstants.setForeground(STYLE_SYSTEM_LEAVE, new Color(180, 0, 0));
-        StyleConstants.setForeground(STYLE_ERROR, Color.RED);
-        StyleConstants.setBold(STYLE_SYSTEM_JOIN, true);
-        StyleConstants.setBold(STYLE_SYSTEM_LEAVE, true);
-    }
+    private final CardLayout cardLayout    = new CardLayout();
+    private final JPanel     cardPanel     = new JPanel(cardLayout);
+    private final JLabel     statusLabel   = new JLabel("Disconnected");
 
-    public ClientGui() {
-        setTitle("Chat Client");
+    // ── Auth card ─────────────────────────────────────────────────────────────
+
+    private JTextField     usernameField;
+    private JPasswordField passwordField;
+    private JLabel         authErrorLabel;
+
+    // ── Chat card ─────────────────────────────────────────────────────────────
+
+    private JTextArea  chatArea;
+    private JTextField inputField;
+    private JButton    sendButton;
+
+    // ── Constructor ───────────────────────────────────────────────────────────
+
+    public ClientGUI(ChatClient client) {
+        super("Chat Client");
+        this.client = client;
+
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setSize(600, 500);
+        setSize(550, 520);
         setLocationRelativeTo(null);
+        setResizable(true);
 
-        buildAuthPanel();
-        buildChatPanel();
-
-        root.add(authPanel, "auth");
-        root.add(chatPanel, "chat");
-        add(root);
-
-        cards.show(root, "auth");
+        buildUI();
         connectToServer();
     }
 
-    // ─── Auth Panel ───────────────────────────────────────────────────────────
+    // ── UI construction ───────────────────────────────────────────────────────
 
-    private void buildAuthPanel() {
-        GridBagConstraints c = new GridBagConstraints();
-        c.insets = new Insets(6, 6, 6, 6);
-        c.fill = GridBagConstraints.HORIZONTAL;
+    private void buildUI() {
+        cardPanel.add(buildAuthCard(), AUTH_CARD);
+        cardPanel.add(buildChatCard(), CHAT_CARD);
 
-        JLabel title = new JLabel("Chat Application", SwingConstants.CENTER);
-        title.setFont(new Font("SansSerif", Font.BOLD, 18));
-        c.gridx = 0; c.gridy = 0; c.gridwidth = 2;
-        authPanel.add(title, c);
+        // Status bar at the bottom
+        statusLabel.setBorder(new EmptyBorder(3, 8, 3, 8));
+        statusLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        statusLabel.setOpaque(true);
+        statusLabel.setBackground(new Color(240, 240, 240));
 
-        c.gridwidth = 1;
-        c.gridy = 1; c.gridx = 0; authPanel.add(new JLabel("Username:"), c);
-        c.gridx = 1; authPanel.add(userField, c);
+        JPanel root = new JPanel(new BorderLayout());
+        root.add(cardPanel,   BorderLayout.CENTER);
+        root.add(statusLabel, BorderLayout.SOUTH);
+        setContentPane(root);
+    }
 
-        c.gridy = 2; c.gridx = 0; authPanel.add(new JLabel("Password:"), c);
-        c.gridx = 1; authPanel.add(passField, c);
+    // ── Auth card ─────────────────────────────────────────────────────────────
+
+    private JPanel buildAuthCard() {
+        JPanel outer = new JPanel(new GridBagLayout());
+        outer.setBackground(new Color(245, 248, 252));
+
+        JPanel form = new JPanel();
+        form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
+        form.setBackground(Color.WHITE);
+        form.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(200, 210, 225)),
+                new EmptyBorder(24, 32, 24, 32)));
+        form.setMaximumSize(new Dimension(340, 360));
+
+        JLabel title = new JLabel("Chat Application");
+        title.setFont(new Font("SansSerif", Font.BOLD, 20));
+        title.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        JLabel subtitle = new JLabel("Login or Register to continue");
+        subtitle.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        subtitle.setForeground(Color.GRAY);
+        subtitle.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        usernameField = new JTextField(18);
+        passwordField = new JPasswordField(18);
+        styleTextField(usernameField);
+        styleTextField(passwordField);
+
+        JButton loginBtn    = new JButton("Login");
+        JButton registerBtn = new JButton("Register");
+        styleButton(loginBtn,    new Color(52, 120, 220));
+        styleButton(registerBtn, new Color(80, 160, 80));
+
+        loginBtn.addActionListener(e -> attemptLogin());
+        registerBtn.addActionListener(e -> attemptRegister());
+
+        // Allow Enter key in password field to trigger login
+        passwordField.addActionListener(e -> attemptLogin());
+
+        authErrorLabel = new JLabel(" ");
+        authErrorLabel.setForeground(new Color(180, 30, 30));
+        authErrorLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        authErrorLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
         JPanel btnRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
+        btnRow.setBackground(Color.WHITE);
         btnRow.add(loginBtn);
         btnRow.add(registerBtn);
-        c.gridy = 3; c.gridx = 0; c.gridwidth = 2;
-        authPanel.add(btnRow, c);
 
-        authStatus.setHorizontalAlignment(SwingConstants.CENTER);
-        authStatus.setForeground(Color.RED);
-        c.gridy = 4;
-        authPanel.add(authStatus, c);
+        form.add(title);
+        form.add(Box.createVerticalStrut(4));
+        form.add(subtitle);
+        form.add(Box.createVerticalStrut(18));
+        form.add(labeledField("Username:", usernameField));
+        form.add(Box.createVerticalStrut(10));
+        form.add(labeledField("Password:", passwordField));
+        form.add(Box.createVerticalStrut(16));
+        form.add(btnRow);
+        form.add(Box.createVerticalStrut(10));
+        form.add(authErrorLabel);
 
-        loginBtn.addActionListener(e -> sendAuth("LOGIN"));
-        registerBtn.addActionListener(e -> sendAuth("REGISTER"));
-        passField.addActionListener(e -> sendAuth("LOGIN"));
+        outer.add(form);
+        return outer;
     }
 
-    private void sendAuth(String cmd) {
-        String user = userField.getText().trim();
-        String pass = new String(passField.getPassword()).trim();
-        if (user.isEmpty() || pass.isEmpty()) {
-            authStatus.setText("Username and password are required.");
-            return;
-        }
-        if (!connection.isConnected()) {
-            authStatus.setText("Not connected to server.");
-            return;
-        }
-        authStatus.setText("Waiting...");
-        username = user;
-        connection.send(cmd + "|" + user + "|" + pass);
+    private JPanel labeledField(String labelText, JComponent field) {
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setBackground(Color.WHITE);
+        JLabel lbl = new JLabel(labelText);
+        lbl.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        lbl.setAlignmentX(Component.LEFT_ALIGNMENT);
+        field.setAlignmentX(Component.LEFT_ALIGNMENT);
+        p.add(lbl);
+        p.add(Box.createVerticalStrut(3));
+        p.add(field);
+        return p;
     }
 
-    // ─── Chat Panel ───────────────────────────────────────────────────────────
+    // ── Chat card ─────────────────────────────────────────────────────────────
 
-    private void buildChatPanel() {
-        chatPane.setEditable(false);
-        chatPane.setContentType("text/plain");
-        JScrollPane scroll = new JScrollPane(chatPane);
+    private JPanel buildChatCard() {
+        // Chat display
+        chatArea = new JTextArea();
+        chatArea.setEditable(false);
+        chatArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+        chatArea.setLineWrap(true);
+        chatArea.setWrapStyleWord(true);
+        JScrollPane chatScroll = new JScrollPane(chatArea);
+        chatScroll.setBorder(BorderFactory.createTitledBorder("Public Chat"));
 
-        JPanel inputRow = new JPanel(new BorderLayout(5, 0));
-        inputRow.add(inputField, BorderLayout.CENTER);
-        inputRow.add(sendBtn, BorderLayout.EAST);
-
-        JPanel bottomBar = new JPanel(new BorderLayout(5, 0));
-        JPanel statusRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
-        statusRow.add(statusLabel);
-        statusRow.add(reconnectBtn);
-        reconnectBtn.setVisible(false);
-        bottomBar.add(statusRow, BorderLayout.WEST);
-        bottomBar.add(inputRow, BorderLayout.CENTER);
-
-        chatPanel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
-        chatPanel.add(scroll, BorderLayout.CENTER);
-        chatPanel.add(bottomBar, BorderLayout.SOUTH);
-
-        sendBtn.addActionListener(e -> sendMessage());
+        // Input row
+        inputField = new JTextField();
+        inputField.setFont(new Font("SansSerif", Font.PLAIN, 14));
         inputField.addActionListener(e -> sendMessage());
-        reconnectBtn.addActionListener(e -> reconnect());
+
+        sendButton = new JButton("Send");
+        sendButton.setFont(new Font("SansSerif", Font.BOLD, 13));
+        sendButton.setBackground(new Color(52, 120, 220));
+        sendButton.setForeground(Color.WHITE);
+        sendButton.setOpaque(true);
+        sendButton.setBorderPainted(false);
+        sendButton.setFocusPainted(false);
+        sendButton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        sendButton.addActionListener(e -> sendMessage());
+
+        JPanel inputRow = new JPanel(new BorderLayout(6, 0));
+        inputRow.setBorder(new EmptyBorder(6, 6, 6, 6));
+        inputRow.add(inputField, BorderLayout.CENTER);
+        inputRow.add(sendButton,  BorderLayout.EAST);
+
+        JPanel panel = new JPanel(new BorderLayout(4, 4));
+        panel.setBorder(new EmptyBorder(6, 6, 0, 6));
+        panel.add(chatScroll, BorderLayout.CENTER);
+        panel.add(inputRow,   BorderLayout.SOUTH);
+        return panel;
+    }
+
+    // ── Networking ────────────────────────────────────────────────────────────
+
+    private void connectToServer() {
+        setStatus("Connecting to " + client.getHost() + ":" + client.getPort() + " …", Color.ORANGE);
+        // Connect on a worker thread; UI will be updated via callbacks
+        Thread t = new Thread(() -> {
+            try {
+                client.connect(this);
+                setStatus("Connected — please login or register.", new Color(0, 130, 0));
+            } catch (IOException e) {
+                setStatus("Cannot connect to server: " + e.getMessage(), Color.RED);
+            }
+        }, "connect-thread");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void attemptLogin() {
+        String user = usernameField.getText().trim();
+        String pass = new String(passwordField.getPassword()).trim();
+        if (user.isEmpty() || pass.isEmpty()) {
+            showAuthError("Username and password are required.");
+            return;
+        }
+        authErrorLabel.setText(" ");
+        client.sendLogin(user, pass);
+    }
+
+    private void attemptRegister() {
+        String user = usernameField.getText().trim();
+        String pass = new String(passwordField.getPassword()).trim();
+        if (user.isEmpty() || pass.isEmpty()) {
+            showAuthError("Username and password are required.");
+            return;
+        }
+        authErrorLabel.setText(" ");
+        client.sendRegister(user, pass);
     }
 
     private void sendMessage() {
         String text = inputField.getText().trim();
         if (text.isEmpty()) return;
-        if (!connection.isConnected()) {
-            appendStyled("[Not connected]\n", STYLE_ERROR);
-            return;
-        }
-        connection.send("CHAT|" + text);
+        client.sendChat(text);
         inputField.setText("");
     }
 
-    // ─── Connection & message handling ───────────────────────────────────────
+    // ── ServerListener callbacks (called from background thread) ─────────────
 
-    private void connectToServer() {
-        connection = new ServerConnection(config, this::handleMessage, this::handleStatus);
-        new Thread(() -> {
-            boolean ok = connection.connect();
-            SwingUtilities.invokeLater(() -> {
-                if (ok) {
-                    setOnline(true);
-                } else {
-                    setOnline(false);
-                }
-            });
-        }, "connect-thread").start();
-    }
-
-    private void reconnect() {
-        connection.close();
-        reconnectBtn.setVisible(false);
-        connectToServer();
-    }
-
-    private void handleMessage(String line) {
-        SwingUtilities.invokeLater(() -> processLine(line));
-    }
-
-    private void processLine(String line) {
-        if (line.startsWith("OK")) {
-            // Auth success
-            cards.show(root, "chat");
-            setTitle("Chat – " + username);
-            setOnline(true);
-        } else if (line.startsWith("ERROR|")) {
-            String msg = line.substring(6);
-            // Could be auth error or in-chat error
-            if (isChatVisible()) {
-                appendStyled("[ERROR] " + msg + "\n", STYLE_ERROR);
-            } else {
-                authStatus.setText(msg);
-            }
-        } else if (line.startsWith("MSG|")) {
-            String[] p = line.split("\\|", 3);
-            if (p.length == 3) {
-                String ts = LocalTime.now().format(TIME_FMT);
-                appendStyled("[" + ts + "] " + p[1] + ": " + p[2] + "\n", STYLE_DEFAULT);
-            }
-        } else if (line.startsWith("SYSTEM|")) {
-            String msg = line.substring(7);
-            String ts = LocalTime.now().format(TIME_FMT);
-            String full = "[" + ts + "] [SYSTEM] " + msg + "\n";
-            if (msg.contains("joined")) {
-                appendStyled(full, STYLE_SYSTEM_JOIN);
-            } else {
-                appendStyled(full, STYLE_SYSTEM_LEAVE);
-            }
-        }
-    }
-
-    private void handleStatus(String msg) {
+    @Override
+    public void onAuthSuccess() {
         SwingUtilities.invokeLater(() -> {
-            boolean online = msg.startsWith("Connected");
-            setOnline(online);
-            if (!online) {
-                reconnectBtn.setVisible(true);
-            }
+            String user = usernameField.getText().trim();
+            setTitle("Chat Client — " + user);
+            setStatus("Online as " + user, new Color(0, 130, 0));
+            cardLayout.show(cardPanel, CHAT_CARD);
+            inputField.requestFocusInWindow();
         });
     }
 
-    private void setOnline(boolean online) {
-        if (online) {
-            statusLabel.setText("● Online");
-            statusLabel.setForeground(new Color(0, 140, 0));
-            reconnectBtn.setVisible(false);
-        } else {
-            statusLabel.setText("● Offline");
-            statusLabel.setForeground(Color.RED);
-        }
+    @Override
+    public void onAuthFailure(String reason) {
+        SwingUtilities.invokeLater(() -> showAuthError(reason));
     }
 
-    private void appendStyled(String text, AttributeSet style) {
-        Document doc = chatPane.getDocument();
-        try {
-            doc.insertString(doc.getLength(), text, style);
-        } catch (BadLocationException ignored) {}
-        chatPane.setCaretPosition(doc.getLength());
+    @Override
+    public void onMessageReceived(String line) {
+        SwingUtilities.invokeLater(() -> {
+            chatArea.append(line + "\n");
+            chatArea.setCaretPosition(chatArea.getDocument().getLength());
+        });
     }
 
-    private boolean isChatVisible() {
-        return chatPanel.isShowing();
+    @Override
+    public void onDisconnected() {
+        SwingUtilities.invokeLater(() -> {
+            setStatus("Disconnected from server.", Color.RED);
+            sendButton.setEnabled(false);
+            inputField.setEnabled(false);
+        });
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private void showAuthError(String msg) {
+        authErrorLabel.setText(msg);
+    }
+
+    private void setStatus(String text, Color fg) {
+        SwingUtilities.invokeLater(() -> {
+            statusLabel.setText("  " + text);
+            statusLabel.setForeground(fg);
+        });
+    }
+
+    private void styleTextField(JTextField field) {
+        field.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        field.setMaximumSize(new Dimension(Integer.MAX_VALUE, 34));
+    }
+
+    private void styleButton(JButton btn, Color bg) {
+        btn.setBackground(bg);
+        btn.setForeground(Color.WHITE);
+        btn.setFont(new Font("SansSerif", Font.BOLD, 13));
+        btn.setOpaque(true);
+        btn.setBorderPainted(false);
+        btn.setFocusPainted(false);
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btn.setPreferredSize(new Dimension(110, 34));
     }
 }
