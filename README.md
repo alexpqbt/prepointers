@@ -92,7 +92,6 @@ Run these commands from the **project root** after `mvn clean package`.
 jpackage ^
   --type exe ^
   --name ChatServer ^
-  --app-version 1.0.0 ^
   --input server/target ^
   --main-jar chat-server.jar ^
   --main-class com.chatapp.server.ChatServer ^
@@ -108,7 +107,6 @@ jpackage ^
 jpackage ^
   --type exe ^
   --name ChatClient ^
-  --app-version 1.0.0 ^
   --input client/target ^
   --main-jar chat-client.jar ^
   --main-class com.chatapp.client.ChatClient ^
@@ -119,7 +117,7 @@ jpackage ^
 
 > **Note:** `jpackage` bundles a full JRE into the installer. The output in
 > `dist\server\` and `dist\client\` will each contain a self-contained
-> `ChatServer-1.0.1.exe` / `ChatClient-1.0.1.exe` that requires no separate Java
+> `ChatServer-<version>.exe` / `ChatClient-<version>.exe` that requires no separate Java
 > installation on the target machine.
 >
 > If you only want a portable app directory instead of an installer, replace
