@@ -8,27 +8,31 @@
     <parent>
         <groupId>com.chatapp</groupId>
         <artifactId>chatapp</artifactId>
-        <version>1.0.0</version>
+        <version>1.0.1</version>
     </parent>
 
     <artifactId>server</artifactId>
-    <packaging>jar</packaging>
+    <name>Chat Server</name>
 
     <build>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
-                <version>3.3.0</version>
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>com.chatapp.server.ServerMain</mainClass>
+                            <mainClass>com.chatapp.server.ChatServer</mainClass>
                         </manifest>
                     </archive>
-                    <finalName>server</finalName>
+                    <finalName>chat-server</finalName>
                 </configuration>
             </plugin>
         </plugins>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+        </resources>
     </build>
 </project>

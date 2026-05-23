@@ -2,114 +2,146 @@ package com.chatapp.server;
 
 import java.io.*;
 import java.net.Socket;
-import java.util.function.Consumer;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
+/**
+ * ClientHandler — one instance per connected client socket.
+ *
+ * Runs on its own thread. Reads newline-delimited commands from the client,
+ * delegates authentication to ChatServer, and handles CHAT messages.
+ *
+ * Protocol commands (client → server):
+ *   LOGIN|username|password
+ *   REGISTER|username|password
+ *   CHAT|message text
+ *
+ * Protocol responses (server → client):
+ *   OK            — authentication success
+ *   ERROR|reason  — failure
+ *   MSG|line      — a chat message line (history replay or live broadcast)
+ */
 public class ClientHandler implements Runnable {
 
-    private static final int MAX_MSG_LEN = 160;
+    private static final DateTimeFormatter TIME_FMT =
+            DateTimeFormatter.ofPattern("HH:mm");
 
-    private final Socket socket;
+    private final Socket     socket;
     private final ChatServer server;
-    private final UserStore userStore;
-    private final Consumer<String> logger;
 
     private BufferedReader reader;
-    private PrintWriter writer;
-    private String username = null;
+    private PrintWriter    writer;
 
-    public ClientHandler(Socket socket, ChatServer server,
-                         UserStore userStore, Consumer<String> logger) {
+    /** Set after successful login/register. Null until authenticated. */
+    private String username;
+
+    public ClientHandler(Socket socket, ChatServer server) {
         this.socket = socket;
         this.server = server;
-        this.userStore = userStore;
-        this.logger = logger;
     }
+
+    // ── Runnable ──────────────────────────────────────────────────────────────
 
     @Override
     public void run() {
         try {
-            reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
-            writer = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), "UTF-8"), true);
+            reader = new BufferedReader(
+                    new InputStreamReader(socket.getInputStream(), "UTF-8"));
+            writer = new PrintWriter(
+                    new OutputStreamWriter(socket.getOutputStream(), "UTF-8"),
+                    true /* auto-flush */);
 
-            if (!authenticate()) return;
+            handleAuthentication();
 
-            server.registerClient(username, this);
-
-            String line;
-            while ((line = reader.readLine()) != null) {
-                handleLine(line.trim());
+            if (username != null) {
+                // Replay history before entering live chat loop
+                server.sendHistoryTo(this);
+                handleChat();
             }
+
         } catch (IOException e) {
-            if (username != null) logger.accept(username + " disconnected unexpectedly.");
+            server.log("Connection error for "
+                    + socket.getRemoteSocketAddress() + ": " + e.getMessage());
         } finally {
-            cleanup();
+            server.removeClient(this);
+            close();
         }
     }
 
-    private boolean authenticate() throws IOException {
+    // ── Authentication phase ──────────────────────────────────────────────────
+
+    /**
+     * Keeps reading commands until LOGIN or REGISTER succeeds, then returns.
+     */
+    private void handleAuthentication() throws IOException {
         String line;
         while ((line = reader.readLine()) != null) {
             String[] parts = line.split("\\|", 3);
-            if (parts.length < 3) {
-                send("ERROR|Invalid command format.");
-                continue;
-            }
-            String cmd = parts[0].trim();
-            String user = parts[1].trim();
-            String pass = parts[2].trim();
+            String cmd = parts[0];
 
-            if (cmd.equals("REGISTER")) {
-                String result = userStore.register(user, pass);
-                send(result);
-                if (result.equals("OK")) {
-                    username = user;
-                    return true;
-                }
-            } else if (cmd.equals("LOGIN")) {
-                String result = userStore.login(user, pass);
-                if (result.equals("OK")) {
-                    if (server.isLoggedIn(user)) {
-                        send("ERROR|User already logged in.");
+            switch (cmd) {
+                case "LOGIN" -> {
+                    if (parts.length < 3) { sendLine("ERROR|Malformed LOGIN."); break; }
+                    String error = server.login(parts[1], parts[2]);
+                    if (error == null) {
+                        username = parts[1];
+                        sendLine("OK");
+                        return;
                     } else {
-                        send("OK");
-                        username = user;
-                        return true;
+                        sendLine(error);
                     }
-                } else {
-                    send(result);
                 }
-            } else {
-                send("ERROR|Please login or register first.");
+                case "REGISTER" -> {
+                    if (parts.length < 3) { sendLine("ERROR|Malformed REGISTER."); break; }
+                    String error = server.register(parts[1], parts[2]);
+                    if (error == null) {
+                        // Auto-login after registration
+                        server.login(parts[1], parts[2]);
+                        username = parts[1];
+                        sendLine("OK");
+                        return;
+                    } else {
+                        sendLine(error);
+                    }
+                }
+                default -> sendLine("ERROR|Unknown command.");
             }
         }
-        return false;
     }
 
-    private void handleLine(String line) {
-        if (line.isEmpty()) return;
-        if (!line.startsWith("CHAT|")) {
-            send("ERROR|Unknown command.");
-            return;
+    // ── Chat phase ────────────────────────────────────────────────────────────
+
+    /**
+     * Reads CHAT commands and broadcasts them until the connection closes.
+     */
+    private void handleChat() throws IOException {
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (line.startsWith("CHAT|")) {
+                String text = line.substring(5).trim();
+                if (text.isEmpty()) continue;
+
+                String timestamp = LocalDateTime.now().format(TIME_FMT);
+                String formatted = "[" + timestamp + "] " + username + ": " + text;
+                server.broadcastMessage(formatted);
+            }
         }
-        String msg = line.substring(5);
-        if (msg.isBlank()) {
-            send("ERROR|Message cannot be blank.");
-            return;
+    }
+
+    // ── I/O ───────────────────────────────────────────────────────────────────
+
+    /** Sends a single newline-terminated line to this client. */
+    public void sendLine(String line) {
+        if (writer != null && !socket.isClosed()) {
+            writer.println(line);
         }
-        if (msg.length() > MAX_MSG_LEN) msg = msg.substring(0, MAX_MSG_LEN);
-        server.broadcast("MSG|" + username + "|" + msg);
     }
 
-    public synchronized void send(String message) {
-        if (writer != null) writer.println(message);
-    }
-
-    public void disconnect() {
+    private void close() {
         try { socket.close(); } catch (IOException ignored) {}
     }
 
-    private void cleanup() {
-        if (username != null) server.removeClient(username);
-        disconnect();
-    }
+    // ── Accessors ─────────────────────────────────────────────────────────────
+
+    public String getUsername() { return username; }
 }
