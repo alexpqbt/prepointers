@@ -11,13 +11,13 @@ chat-app/
 ├── pom.xml                          (parent POM)
 ├── server/
 │   ├── pom.xml
-│   └── src/main/java/com/chat/server/
+│   └── src/main/java/com/chatapp/server/
 │       ├── ChatServer.java
 │       ├── ClientHandler.java
 │       └── ServerGUI.java
 ├── client/
 │   ├── pom.xml
-│   └── src/main/java/com/chat/client/
+│   └── src/main/java/com/chatapp/client/
 │       ├── ChatClient.java
 │       └── ClientGUI.java
 ├── server/src/main/resources/
