@@ -7,12 +7,13 @@
 
     <groupId>com.chatapp</groupId>
     <artifactId>chatapp</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <packaging>pom</packaging>
+    <name>Prepointer</name>
 
     <modules>
-        <module>client</module>
         <module>server</module>
+        <module>client</module>
     </modules>
 
     <properties>
@@ -20,4 +21,26 @@
         <maven.compiler.target>25</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.13.0</version>
+                    <configuration>
+                        <source>25</source>
+                        <target>25</target>
+                        <enablePreview>false</enablePreview>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>3.4.2</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
 </project>
